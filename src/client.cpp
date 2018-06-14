@@ -86,9 +86,9 @@ public:
     void set_injector(string);
 
 private:
-    void mitm_tls_handshake( GenericConnection
-                           , const Request&
-                           , asio::yield_context);
+    GenericConnection mitm_tls_handshake( GenericConnection
+                                        , const Request&
+                                        , asio::yield_context);
 
     void serve_request(GenericConnection& con, asio::yield_context yield);
 
@@ -428,18 +428,6 @@ Response bad_gateway(const Request& req)
     return res;
 }
 
-static
-http::response<http::string_body> test_page(const Request& req)
-{
-    http::response<http::string_body> res{http::status::ok, req.version()};
-    res.set(http::field::server, BOOST_BEAST_VERSION_STRING);
-    res.set(http::field::content_type, "text/html");
-    res.keep_alive(req.keep_alive());
-    res.body() = "It works!";
-    res.prepare_payload();
-    return res;
-}
-
 //------------------------------------------------------------------------------
 void setup_ssl_context( ssl::context& ssl_context
                       , const string& cert_chain
@@ -481,9 +469,9 @@ string base_domain_from_target(const beast::string_view& target)
 
 //------------------------------------------------------------------------------
 // TODO: This function is heavily unfinished, mostly just for debugging ATM
-void Client::State::mitm_tls_handshake( GenericConnection con
-                                      , const Request& con_req
-                                      , asio::yield_context yield)
+GenericConnection Client::State::mitm_tls_handshake( GenericConnection con
+                                                   , const Request& con_req
+                                                   , asio::yield_context yield)
 {
     ssl::context ssl_context{ssl::context::sslv23};
 
@@ -518,14 +506,15 @@ void Client::State::mitm_tls_handshake( GenericConnection con
     http::async_write(con, res, yield);
 
     ssl::stream<GenericConnection&> ssl_con(con, ssl_context);
-
     ssl_con.async_handshake(ssl::stream_base::server, yield);
 
-    Request req;
-    beast::flat_buffer buffer;
-    http::async_read(ssl_con, buffer, req, yield);
-    auto res2 = test_page(req);
-    http::async_write(ssl_con, res2, yield);
+    static const auto ssl_shutter = [](ssl::stream<GenericConnection&>& s) {
+        // Just close the underlying connection
+        // (TLS has no message exchange for shutdown).
+        s.next_layer().close();
+    };
+
+    return GenericConnection(move(ssl_con), move(ssl_shutter));
 }
 
 //------------------------------------------------------------------------------
@@ -602,6 +591,7 @@ void Client::State::serve_request( GenericConnection& con
     });
 
     // Process the different requests that may come over the same connection.
+    //XXXXbool mitm_active(false);
     for (;;) {  // continue for next request; break for no more requests
         Request req;
 
@@ -632,12 +622,14 @@ void Client::State::serve_request( GenericConnection& con
             //}
 
             try {
-                mitm_tls_handshake(move(con), req, yield);
+                /*con =*/ mitm_tls_handshake(move(con), req, yield);
+                //XXXX prepend HTTPS to req.target if mitm_active;
             }
             catch(const std::exception& e) {
                 cerr << "Mitm exception: " << e.what() << endl;
+                return;
             }
-            return;
+            continue;
         }
 
         request_config = route_choose_config(req, matches, default_request_config);
