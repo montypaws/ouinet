@@ -3,6 +3,7 @@ package ie.equalit.ouinet;
 import android.content.Context;
 
 import android.net.wifi.WifiManager;
+import java.io.File;
 
 public class Ouinet {
     // Used to load the 'native-lib' library on application startup.
@@ -28,38 +29,49 @@ public class Ouinet {
         String injector_ep = readInjectorEP();
         String credentials = readCredentialsFor(injector_ep);
 
+        new File(dir()).mkdirs();
+
         WifiManager wifi = (WifiManager)ctx.getSystemService(Context.WIFI_SERVICE);
         if (wifi != null){
             _lock = wifi.createMulticastLock("mylock");
             _lock.acquire();
         }
 
-        nStartClient(_ctx.getFilesDir().getAbsolutePath(),
+        nStartClient(dir(),
                 injector_ep,
                 ipns,
                 credentials,
                 false);
     }
 
+    // Stop the internal ouinet/client threads. Once this function returns, the
+    // ouinet/client will have all of it's resources freed. It should be called
+    // no later than in Activity.onDestroy()
     public void stop() {
         nStopClient();
         if (_lock != null) { _lock.release(); }
     }
 
-    public void setInjectorEP(String endpoint) {
-        writeInjectorEP(endpoint);
-        nSetInjectorEP(endpoint);
-    }
-
+    // Set injector's IPNS (A.k.a. it's IPFS ID)
     public void setIPNS(String ipns) {
         writeIPNS(ipns);
         nSetIPNS(ipns);
     }
 
+    // Get injector's IPNS (A.k.a. it's IPFS ID)
     public String getIPNS() {
         return readIPNS();
     }
 
+    // Set injector endpoint. Can be either in the form IP:PORT or it can be an
+    // I2P address.
+    public void setInjectorEndpoint(String endpoint) {
+        writeInjectorEP(endpoint);
+        nSetInjectorEP(endpoint);
+    }
+
+    // Return injector's endpoint as specified with the setInjectorEndpoint
+    // function.
     public String getInjectorEndpoint() {
         return readInjectorEP();
     }
@@ -74,7 +86,9 @@ public class Ouinet {
     }
 
     //----------------------------------------------------------------
-    protected String dir() { return _ctx.getFilesDir().getAbsolutePath(); }
+    protected String dir() {
+        return _ctx.getFilesDir().getAbsolutePath() + "/ouinet";
+    }
 
     protected String config_ipns()        { return dir() + "/ipns.txt";        }
     protected String config_injector()    { return dir() + "/injector.txt";    }
