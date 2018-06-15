@@ -86,11 +86,11 @@ public:
     void set_injector(string);
 
 private:
-    GenericConnection mitm_tls_handshake( GenericConnection
+    GenericConnection mitm_tls_handshake( GenericConnection&
                                         , const Request&
                                         , asio::yield_context);
 
-    void serve_request(GenericConnection& con, asio::yield_context yield);
+    void serve_request(GenericConnection&& con, asio::yield_context yield);
 
     void handle_connect_request( GenericConnection& client_c
                                , const Request& req
@@ -469,7 +469,7 @@ string base_domain_from_target(const beast::string_view& target)
 
 //------------------------------------------------------------------------------
 // TODO: This function is heavily unfinished, mostly just for debugging ATM
-GenericConnection Client::State::mitm_tls_handshake( GenericConnection con
+GenericConnection Client::State::mitm_tls_handshake( GenericConnection& con
                                                    , const Request& con_req
                                                    , asio::yield_context yield)
 {
@@ -505,10 +505,10 @@ GenericConnection Client::State::mitm_tls_handshake( GenericConnection con
     http::response<http::string_body> res{http::status::ok, con_req.version()};
     http::async_write(con, res, yield);
 
-    auto ssl_con = make_unique<ssl::stream<GenericConnection>>(move(con), ssl_context);
+    auto ssl_con = make_unique<ssl::stream<GenericConnection&>>(con, ssl_context);
     ssl_con->async_handshake(ssl::stream_base::server, yield);
 
-    static const auto ssl_shutter = [](ssl::stream<GenericConnection>& s) {
+    static const auto ssl_shutter = [](ssl::stream<GenericConnection&>& s) {
         // Just close the underlying connection
         // (TLS has no message exchange for shutdown).
         s.next_layer().close();
@@ -518,7 +518,7 @@ GenericConnection Client::State::mitm_tls_handshake( GenericConnection con
 }
 
 //------------------------------------------------------------------------------
-void Client::State::serve_request( GenericConnection& con
+void Client::State::serve_request( GenericConnection&& con
                                  , asio::yield_context yield)
 {
 
@@ -622,7 +622,7 @@ void Client::State::serve_request( GenericConnection& con
             //}
 
             try {
-                /*con =*/ mitm_tls_handshake(move(con), req, yield);
+                /*con =*/ mitm_tls_handshake(con, req, yield);
                 //XXXX prepend HTTPS to req.target if mitm_active;
             }
             catch(const std::exception& e) {
@@ -862,7 +862,7 @@ void Client::State::start(int argc, char* argv[])
                         , _config.local_endpoint()
                         , [this, self]
                           (GenericConnection c, asio::yield_context yield) {
-                      serve_request(c, yield);
+                      serve_request(move(c), yield);
                   });
           });
 
