@@ -505,10 +505,10 @@ GenericConnection Client::State::mitm_tls_handshake( GenericConnection con
     http::response<http::string_body> res{http::status::ok, con_req.version()};
     http::async_write(con, res, yield);
 
-    ssl::stream<GenericConnection&> ssl_con(con, ssl_context);
-    ssl_con.async_handshake(ssl::stream_base::server, yield);
+    auto ssl_con = make_unique<ssl::stream<GenericConnection>>(move(con), ssl_context);
+    ssl_con->async_handshake(ssl::stream_base::server, yield);
 
-    static const auto ssl_shutter = [](ssl::stream<GenericConnection&>& s) {
+    static const auto ssl_shutter = [](ssl::stream<GenericConnection>& s) {
         // Just close the underlying connection
         // (TLS has no message exchange for shutdown).
         s.next_layer().close();
