@@ -2,6 +2,11 @@
 
 # Ouinet
 
+> Copyright (C) 2017, 2018 eQualit.ie Inc. and ASL19 Inc.  
+> License LGPLv2.1+: GNU LGPL version 2.1 or later <http://gnu.org/licenses/lgpl.html>.  
+> This is free software: you are free to change and redistribute it.  
+> There is NO WARRANTY, to the extent permitted by law.
+
 **Ouinet** is a Free/Open Source technology which allows web content to be
 served with the help of an entire network of cooperating nodes using
 peer-to-peer routing and distributed caching of responses.  This helps
