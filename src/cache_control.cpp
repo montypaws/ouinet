@@ -225,10 +225,10 @@ Response CacheControl::bad_gateway(const Request& req, beast::string_view reason
 }
 
 Response
-CacheControl::fetch(const Request& request, Yield yield)
+CacheControl::fetch(const Request& request, const TCPLookup& lookup, Yield yield)
 {
     sys::error_code ec;
-    auto response = do_fetch(request, yield[ec]);
+    auto response = do_fetch(request, lookup, yield[ec]);
 
     if(!ec && !has_correct_content_length(response)) {
 #ifndef NDEBUG
@@ -266,7 +266,7 @@ static bool must_revalidate(const Request& request)
 
 // TODO: This function is unfinished.
 Response
-CacheControl::do_fetch(const Request& request, Yield yield)
+CacheControl::do_fetch(const Request& request, const TCPLookup& lookup, Yield yield)
 {
     namespace err = asio::error;
 
@@ -275,7 +275,7 @@ CacheControl::do_fetch(const Request& request, Yield yield)
     if (must_revalidate(request)) {
         sys::error_code ec1, ec2;
 
-        auto res = do_fetch_fresh(request, yield[ec1]);
+        auto res = do_fetch_fresh(request, lookup, yield[ec1]);
         if (!ec1) return res;
 
         auto cache_entry = do_fetch_stored(request, yield[ec2]);
@@ -301,7 +301,7 @@ CacheControl::do_fetch(const Request& request, Yield yield)
         // Retrieving from cache failed.
         sys::error_code fresh_ec;
 
-        auto res = do_fetch_fresh(request, yield[fresh_ec]);
+        auto res = do_fetch_fresh(request, lookup, yield[fresh_ec]);
 
         if (!fresh_ec) return res;
 
@@ -320,7 +320,7 @@ CacheControl::do_fetch(const Request& request, Yield yield)
 
     if (has_cache_control_directive(cache_entry.response, "private")
         || is_older_than_max_cache_age(cache_entry.time_stamp)) {
-        auto response = do_fetch_fresh(request, yield[ec]);
+        auto response = do_fetch_fresh(request, lookup, yield[ec]);
 
         if (!ec) {
             LOG_DEBUG(yield.tag(), ": Response was served from injector: cached response is private or too old");
@@ -348,7 +348,7 @@ CacheControl::do_fetch(const Request& request, Yield yield)
 
         rq.set(http::field::if_none_match, *cache_etag);
 
-        auto response = do_fetch_fresh(rq, yield[ec]);
+        auto response = do_fetch_fresh(rq, lookup, yield[ec]);
 
         if (ec) {
             LOG_DEBUG(yield.tag(), ": Response was served from cache: revalidation failed");
@@ -364,7 +364,7 @@ CacheControl::do_fetch(const Request& request, Yield yield)
         return response;
     }
 
-    auto response = do_fetch_fresh(request, yield[ec]);
+    auto response = do_fetch_fresh(request, lookup, yield[ec]);
 
     if (ec) {
         LOG_DEBUG(yield.tag(), ": Response was served from cache: requesting fresh response failed");
@@ -386,11 +386,11 @@ posix_time::time_duration CacheControl::max_cached_age() const
 }
 
 Response
-CacheControl::do_fetch_fresh(const Request& rq, Yield yield)
+CacheControl::do_fetch_fresh(const Request& rq, const TCPLookup& lookup, Yield yield)
 {
     if (fetch_fresh) {
         sys::error_code ec;
-        auto rs = fetch_fresh(rq, yield[ec].tag("fetch_fresh"));
+        auto rs = fetch_fresh(rq, lookup, yield[ec].tag("fetch_fresh"));
         if (!ec) {
             sys::error_code ec2;
             // The storage operation may alter the response (e.g. add headers).

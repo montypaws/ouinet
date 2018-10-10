@@ -1,6 +1,7 @@
 #pragma once
 
 #include <boost/asio/error.hpp>
+#include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/spawn.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/date_time/posix_time/posix_time.hpp>
@@ -12,12 +13,13 @@ namespace ouinet {
 
 class CacheControl {
 public:
-    using Request  = http::request<http::string_body>;
-    using Response = http::response<http::dynamic_body>;
+    using Request   = http::request<http::string_body>;
+    using Response  = http::response<http::dynamic_body>;
+    using TCPLookup = asio::ip::tcp::resolver::results_type;
 
     // TODO: Add cancellation support
     using FetchStored = std::function<CacheEntry(const Request&, Yield)>;
-    using FetchFresh  = std::function<Response(const Request&, Yield)>;
+    using FetchFresh  = std::function<Response(const Request&, const TCPLookup&, Yield)>;
     // This function may alter a (moved) response and return it.
     using Store       = std::function<Response(const Request&, Response, Yield)>;
 
@@ -26,7 +28,7 @@ public:
         : _server_name(std::move(server_name))
     {}
 
-    Response fetch(const Request&, Yield);
+    Response fetch(const Request&, const TCPLookup&, Yield);
 
     FetchStored  fetch_stored;
     FetchFresh   fetch_fresh;
@@ -50,8 +52,8 @@ public:
 
 private:
     // TODO: Add cancellation support
-    Response do_fetch(const Request&, Yield);
-    Response do_fetch_fresh(const Request&, Yield);
+    Response do_fetch(const Request&, const TCPLookup&, Yield);
+    Response do_fetch_fresh(const Request&, const TCPLookup&, Yield);
     CacheEntry do_fetch_stored(const Request&, Yield);
 
     bool is_stale( const boost::posix_time::ptime& time_stamp

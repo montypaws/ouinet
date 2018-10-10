@@ -56,9 +56,10 @@ using namespace ouinet;
 
 namespace posix_time = boost::posix_time;
 
-using tcp      = asio::ip::tcp;
-using Request  = http::request<http::string_body>;
-using Response = http::response<http::dynamic_body>;
+using tcp       = asio::ip::tcp;
+using Request   = http::request<http::string_body>;
+using Response  = http::response<http::dynamic_body>;
+using TCPLookup = asio::ip::tcp::resolver::results_type;
 using boost::optional;
 
 static const fs::path OUINET_PID_FILE = "pid";
@@ -491,7 +492,7 @@ public:
             return fetch_stored(rq, yield);
         };
 
-        cc.fetch_fresh = [&] (const Request& rq, Yield yield) {
+        cc.fetch_fresh = [&] (const Request& rq, const TCPLookup&, Yield yield) {
             return fetch_fresh(rq, yield);
         };
 
@@ -534,7 +535,7 @@ public:
 
     Response fetch(const Request& rq, Yield yield)
     {
-        return cc.fetch(rq, yield);
+        return cc.fetch(rq, {}, yield);
     }
 
 private:

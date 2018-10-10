@@ -168,7 +168,7 @@ public:
         // and it is removed just before saving to the cache
         // (though it is still used to create the descriptor).
 
-        cc.fetch_fresh = [&] (const Request& rq_, Yield yield) {
+        cc.fetch_fresh = [&] (const Request& rq_, const TCPLookup& lookup, Yield yield) {
             string host = rq_[http::field::host].to_string();
 
             auto& connection = connections[host];
@@ -180,7 +180,7 @@ public:
 
             auto ret = fetch_http_page( ios
                                       , connection
-                                      , rq
+                                      , rq, lookup
                                       , default_timeout::fetch_http()
                                       , abort_signal
                                       , yield[ec]);
@@ -205,9 +205,9 @@ public:
         };
     }
 
-    Response fetch(const Request& rq, Yield yield)
+    Response fetch(const Request& rq, const TCPLookup& lookup, Yield yield)
     {
-        return cc.fetch(rq, yield);
+        return cc.fetch(rq, lookup, yield);
     }
 
 private:
@@ -397,10 +397,9 @@ void serve( InjectorConfig& config
                                  , yield[ec].tag("fetch_http_page"));
         } else {
             // Ouinet header found, behave like a Ouinet injector.
-            // TODO: Reuse DNS lookup result below.
             req2.erase(ouinet_version_hdr);  // do not propagate or cache the header
 
-            res = cc.fetch(req2, yield[ec].tag("cache_control.fetch"));
+            res = cc.fetch(req2, lookup, yield[ec].tag("cache_control.fetch"));
         }
         if (ec) {
             handle_bad_request( con, req
