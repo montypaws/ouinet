@@ -98,7 +98,7 @@ void handle_bad_request( GenericStream& con
 // the already resolved endpoints in `lookup`,
 // only headers are used from `req`.
 static
-void handle_connect_request( GenericStream& client_c
+void handle_connect_request( GenericStream client_c
                            , const Request& req, const TCPLookup& lookup
                            , Signal<void()>& disconnect_signal
                            , Yield yield)
@@ -150,7 +150,7 @@ void handle_connect_request( GenericStream& client_c
         return;
     }
 
-    full_duplex(client_c, origin_c, yield);
+    full_duplex(move(client_c), GenericStream(move(origin_c)), yield);
 }
 
 //------------------------------------------------------------------------------
@@ -176,33 +176,46 @@ public:
                                   , const Request& rq
                                   , const util::url_match& url
                                   , Signal<void()>& abort_signal
-                                  , Yield yield)
+                                  , Yield yield_)
     {
+        Yield yield = yield_.tag("connect");
+
         using ConP = unique_ptr<Connection>;
 
         sys::error_code ec;
 
+        yield.log("lookup");
         // Resolve target endpoint and check its validity.
         TCPLookup lookup(resolve_target( rq, ios, abort_signal
                                        , yield[ec]));
 
+        yield.log("lookup ec:", ec.message());
         if (ec) return or_throw<ConP>(yield, ec);
 
-        auto stream = connect_to_host( lookup
+        auto socket = connect_to_host( lookup
                                      , ios
                                      , abort_signal
                                      , yield[ec]);
 
+        yield.log("connect_to_host ec:", ec.message());
+
         if (ec) return or_throw<ConP>(yield, ec);
 
+        GenericStream stream;
+
         if (url.scheme == "https") {
-            stream = ssl::util::client_handshake( move(stream)
+            stream = ssl::util::client_handshake( move(socket)
+                                                , ssl_ctx
                                                 , url.host
                                                 , abort_signal
                                                 , yield[ec]);
-        }
 
-        if (ec) return or_throw<ConP>(yield, ec);
+            yield.log("handshake ec:", ec.message());
+            if (ec) return or_throw<ConP>(yield, ec);
+        }
+        else {
+            stream = move(socket);
+        }
 
         return std::make_unique<Connection>(move(stream), boost::none);
     }
@@ -210,12 +223,14 @@ public:
     // TODO: Replace this with cancellation support in which fetch_ operations
     // get a signal parameter
     InjectorCacheControl( asio::io_service& ios
+                        , asio::ssl::context& ssl_ctx
                         , ConPools& connection_pools
                         , const InjectorConfig& config
                         , unique_ptr<CacheInjector>& injector
                         , uuid_generator& genuuid
                         , Signal<void()>& abort_signal)
-        : injector(injector)
+        : ssl_ctx(ssl_ctx)
+        , injector(injector)
         , config(config)
         , genuuid(genuuid)
         , cc("Ouinet Injector")
@@ -243,9 +258,13 @@ public:
                                          , asio::error::operation_not_supported);
             }
 
+            assert(!url.scheme.empty());
+            assert(url.scheme == "https" || url.scheme == "http");
             bool is_ssl = url.scheme == "https";
 
             PoolId pool_id{is_ssl, move(host)};
+
+            yield.log("__Host: ", host, " ssl: ", is_ssl);
 
             auto& pool = connection_pools[pool_id];
 
@@ -255,8 +274,10 @@ public:
                 if (pool.empty()) connection_pools.erase(pool_id);
             });
 
+            yield.log("__Con: ", connection.get());
             if (!connection) {
                 connection = connect(ios, rq_, url, abort_signal, yield[ec]);
+                yield.log("__Con: new ", connection.get(), " ", ec.message());
             }
 
             Request rq = erase_hop_by_hop_headers(rq_);
@@ -358,6 +379,7 @@ private:
     }
 
 private:
+    asio::ssl::context& ssl_ctx;
     unique_ptr<CacheInjector>& injector;
     const InjectorConfig& config;
     uuid_generator& genuuid;
@@ -450,6 +472,7 @@ static
 void serve( InjectorConfig& config
           , uint64_t connection_id
           , GenericStream con
+          , asio::ssl::context& ssl_ctx
           , unique_ptr<CacheInjector>& injector
           , ConPools& connection_pools
           , uuid_generator& genuuid
@@ -461,6 +484,7 @@ void serve( InjectorConfig& config
     });
 
     InjectorCacheControl cc( con.get_io_service()
+                           , ssl_ctx
                            , connection_pools
                            , config
                            , injector
@@ -496,7 +520,7 @@ void serve( InjectorConfig& config
         }
 
         if (req.method() == http::verb::connect) {
-            return handle_connect_request( con
+            return handle_connect_request( move(con)
                                          , req, lookup
                                          , close_connection_signal
                                          , yield.tag("handle_connect"));
@@ -515,6 +539,7 @@ void serve( InjectorConfig& config
             GenericStream c;
             res = fetch_http_page( con.get_io_service()
                                  , c
+                                 , ssl_ctx
                                  , erase_hop_by_hop_headers(move(req2))
                                  , lookup
                                  , default_timeout::fetch_http()
@@ -578,6 +603,10 @@ void listen( InjectorConfig& config
 
     ConPools connection_pools;
 
+    asio::ssl::context ssl_ctx{asio::ssl::context::tls_client};
+    ssl_ctx.set_default_verify_paths();
+    ssl_ctx.set_verify_mode(asio::ssl::verify_peer);
+
     while (true) {
         GenericStream connection = proxy_server.accept(yield[ec]);
         if (ec == boost::asio::error::operation_aborted) {
@@ -593,6 +622,7 @@ void listen( InjectorConfig& config
 
         asio::spawn(ios, [
             connection = std::move(connection),
+            &ssl_ctx,
             &cache_injector,
             &shutdown_signal,
             &config,
@@ -604,6 +634,7 @@ void listen( InjectorConfig& config
             serve( config
                  , connection_id
                  , std::move(connection)
+                 , ssl_ctx
                  , cache_injector
                  , connection_pools
                  , genuuid
